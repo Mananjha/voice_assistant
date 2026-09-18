@@ -19,3 +19,8 @@ beautifulsoup4
 requests
 
 
+aiortc
+faster-whisper
+pyttsx3
+numpy
+scipy

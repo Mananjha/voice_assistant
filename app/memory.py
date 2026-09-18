@@ -1,22 +1,22 @@
 from typing import Dict, List
 
 
-call_memory: Dict[str, List[dict]] = {}
+session_memory: Dict[str, List[dict]] = {}
 
 
-def get_memory(call_sid: str) -> List[dict]:
-    return call_memory.get(call_sid, [])
+def get_memory(session_id: str) -> List[dict]:
+    return session_memory.get(session_id, [])
 
 
 def add_message(
-    call_sid: str,
+    session_id: str,
     role: str,
     content: str
 ):
-    if call_sid not in call_memory:
-        call_memory[call_sid] = []
+    if session_id not in session_memory:
+        session_memory[session_id] = []
 
-    call_memory[call_sid].append(
+    session_memory[session_id].append(
         {
             "role": role,
             "content": content
@@ -24,8 +24,8 @@ def add_message(
     )
 
 
-def clear_memory(call_sid: str):
-    call_memory.pop(call_sid, None)
+def clear_memory(session_id: str):
+    session_memory.pop(session_id, None)
 
 
 

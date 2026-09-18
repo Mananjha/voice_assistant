@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        Naikroop AI Voice Assistant
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="/static/style.css"
+    >
+
+</head>
+
+
+<body>
+
+    <div class="container">
+
+        <div class="header">
+
+            <h1>
+                Naikroop AI Voice Assistant
+            </h1>
+
+            <p>
+                Talk directly with Naikroop's AI assistant.
+            </p>
+
+        </div>
+
+
+        <div class="call-card">
+
+            <div
+                id="status"
+                class="status"
+            >
+                Ready
+            </div>
+
+
+            <div
+                id="callIcon"
+                class="call-icon"
+            >
+                📞
+            </div>
+
+
+            <button
+                id="callButton"
+                class="call-button"
+            >
+                📞 Call Naikroop AI
+            </button>
+
+
+            <button
+                id="endButton"
+                class="end-button hidden"
+            >
+                ⏹ End Call
+            </button>
+
+
+            <p id="instruction">
+
+                Click "Call Naikroop AI"
+                to start the conversation.
+
+            </p>
+
+
+            <div
+                id="conversation"
+                class="conversation"
+            ></div>
+
+        </div>
+
+    </div>
+
+
+    <script src="/static/app.js"></script>
+
+</body>
+
+</html>

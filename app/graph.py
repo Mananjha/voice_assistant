@@ -19,14 +19,14 @@ from langgraph.graph import (
 )
 
 from app.config import HF_TOKEN
-from app.knowledge import load_knowledge
+from app.rag import retrieve_knowledge
 from app.memory import (
     get_memory,
     add_message
 )
 
 class AgentState(TypedDict):
-    call_sid: str
+    session_id: str
     question: str
     answer: str
 
@@ -48,10 +48,10 @@ llm = ChatHuggingFace(
 
 def generate_answer(state: AgentState):
 
-    call_sid = state["call_sid"]
+    session_id = state["session_id"]
     question = state["question"]
 
-    previous_messages = get_memory(call_sid)
+    previous_messages = get_memory(session_id)
 
     history = []
 
@@ -146,18 +146,18 @@ RETRIEVED NAIKROOP INFORMATION:
         )    
 
     add_message(
-        call_sid,
+        session_id,
         "user",
         question
     )
 
     add_message(
-        call_sid,
+        session_id,
         "assistant",
         answer
     )
     return {
-        "call_sid": call_sid,
+        "session_id": session_id,
         "question": question,
         "answer": answer
     }
@@ -182,12 +182,12 @@ graph_builder.add_edge(
 graph = graph_builder.compile()
 
 def ask_agent(
-    call_sid: str,
+    session_id: str,
     question: str
 ) -> str:
     result = graph.invoke(
         {
-            "call_sid": call_sid,
+            "session_id": session_id,
             "question": question,
             "answer": ""
         }

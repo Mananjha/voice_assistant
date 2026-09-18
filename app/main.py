@@ -1,253 +1,226 @@
-import json
+import asyncio
+import uuid
 from pathlib import Path
-from datetime import datetime
 
-from fastapi import (
-    FastAPI,
-    Request,
-    Form
-)
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from fastapi.responses import Response
-
-from twilio.twiml.voice_response import (
-    VoiceResponse,
-    Gather
-)
+from aiortc import RTCPeerConnection, RTCSessionDescription
 
 from app.graph import ask_agent
-from app.memory import clear_memory
+from app.voice import VoiceSession
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+STATIC_DIR = BASE_DIR / "static"
 
 app = FastAPI(
-    title="Naikroop AI Voice Enquiry Assistant"
+    title="Naikroop AI Voice Enquiry Assistant",
+    description="Browser-based AI voice enquiry assistant for Naikroop",
+    version="2.0.0",
 )
 
+app.mount(
+    "/static",
+    StaticFiles(directory=STATIC_DIR),
+    name="static",
+)
 
-CALLS_FILE = Path("data/calls.json")
-
-
-def load_calls():
-
-    if not CALLS_FILE.exists():
-        return []
-
-    try:
-        return json.loads(
-            CALLS_FILE.read_text(
-                encoding="utf-8"
-            )
-        )
-    except Exception:
-        return []
+class QuestionRequest(BaseModel):
+    session_id: str
+    question: str
 
 
-def save_calls(calls):
+@app.post("/ask")
+def ask_question(request: QuestionRequest):
 
-    CALLS_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True
+    answer = ask_agent(
+        request.session_id,
+        request.question,
     )
 
-    CALLS_FILE.write_text(
-        json.dumps(
-            calls,
-            indent=2,
-            ensure_ascii=False
-        ),
-        encoding="utf-8"
-    )
-
+    return {
+        "answer": answer
+    }
 
 @app.get("/")
 def home():
 
-    return {
-        "message": "Naikroop AI Voice Enquiry Assistant",
-        "status": "running"
-    }
-
-@app.get("/health")
-def health():
-
-    return {
-        "status": "ok"
-    }
-
-
-@app.post("/voice")
-async def voice(request: Request):
-
-    response = VoiceResponse()
-
-    gather = Gather(
-        input="speech",
-        action="/process-speech",
-        method="POST",
-        speech_timeout="auto",
-        language="en-IN"
+    return FileResponse(
+        STATIC_DIR / "index.html"
     )
 
-    gather.say(
-        "Hello. You are speaking with "
-        "Naikroop's AI assistant. "
-        "How can I help you?",
-        voice="alice",
-        language="en-IN"
-    )
-
-    response.append(gather)
-    
-    response.redirect("/voice")
-
-    # response.say(
-    #     "I didn't hear anything. "
-    #     "Please call again if you need assistance.",
-    #     voice="alice",
-    #     language="en-IN"
-    # )
-
-    return Response(
-        content=str(response),
-        media_type="application/xml"
-    )
+peer_connections = {}
+voice_sessions = {}
 
 
-@app.post("/process-speech")
-async def process_speech(
-    request: Request,
-    SpeechResult: str = Form(""),
-    CallSid: str = Form("")
-):
+class WebRTCOffer(BaseModel):
+    sdp: str
+    type: str
+
+
+@app.post("/webrtc/offer")
+async def webrtc_offer(offer: WebRTCOffer):
+
+    session_id = str(uuid.uuid4())
 
     print()
-    print("=" * 60)
-    print("CALL SID:", CallSid)
-    print("USER:", SpeechResult)
-    print("=" * 60)
-    
-    response = VoiceResponse()
+    print("========================================")
+    print("NEW WEBRTC CALL")
+    print(f"Session ID: {session_id}")
+    print("========================================")
 
-    question = SpeechResult.strip()
+    pc = RTCPeerConnection()
 
-    if not question:
+    peer_connections[session_id] = pc
 
-        gather = Gather(
-            input="speech",
-            action="/process-speech",
-            method="POST",
-            speech_timeout="auto",
-            language="en-IN"
-        )
+    voice_session = VoiceSession(
+        session_id
+    )
 
-        gather.say(
-            "Sorry, I didn't understand that. "
-            "Could you please repeat your question?",
-            voice="alice",
-            language="en-IN"
-        )
+    voice_sessions[session_id] = voice_session
 
-        response.append(gather)
-
-        return Response(
-            content=str(response),
-            media_type="application/xml"
-        )
-
-    try:
-
-        answer = ask_agent(
-            CallSid,
-            question
-        )
-        
-        print("AI:", answer)
-
-    except Exception as e:
+    @pc.on("track")
+    def on_track(track):
 
         print(
-            "Agent error:",
-            str(e)
+            f"Received track: {track.kind}"
         )
 
-        answer = (
-            "I'm sorry, I'm having trouble "
-            "answering that right now. "
-            "Please contact the Naikroop team "
-            "for assistance."
+        if track.kind == "audio":
+
+            async def receive_audio():
+
+                try:
+
+                    while voice_session.running:
+
+                        frame = await track.recv()
+
+                        await voice_session.process_audio(
+                            frame
+                        )
+
+                except Exception as e:
+
+                    print(
+                        "Audio receive stopped:"
+                    )
+
+                    print(
+                        repr(e)
+                    )
+
+            asyncio.create_task(
+                receive_audio()
+            )
+
+    @pc.on("connectionstatechange")
+    async def on_connectionstatechange():
+
+        print(
+            "WebRTC connection state:",
+            pc.connectionState
         )
 
-    gather = Gather(
-        input="speech",
-        action="/process-speech",
-        method="POST",
-        speech_timeout="auto",
-        language="en-IN"
+        if pc.connectionState == "connected":
+
+            print(
+                "WebRTC connected."
+            )
+
+            asyncio.create_task(
+                voice_session.send_greeting()
+            )
+
+        elif pc.connectionState in [
+            "failed",
+            "closed",
+            "disconnected",
+        ]:
+
+            await cleanup_session(
+                session_id
+            )
+
+    await pc.setRemoteDescription(
+        RTCSessionDescription(
+            sdp=offer.sdp,
+            type=offer.type,
+        )
     )
 
-    gather.say(
-        answer,
-        voice="alice",
-        language="en-IN"
+    pc.addTrack(
+        voice_session.output_track
     )
 
-    response.append(gather)
+    answer = await pc.createAnswer()
 
-    return Response(
-        content=str(response),
-        media_type="application/xml"
+    await pc.setLocalDescription(
+        answer
     )
-
-
-@app.post("/call-complete")
-async def call_complete(
-    request: Request
-):
-
-    form = await request.form()
-
-    call_sid = form.get(
-        "CallSid",
-        ""
-    )
-
-    calls = load_calls()
-
-    from app.memory import get_memory
-
-    conversation = get_memory(
-        call_sid
-    )
-
-    record = {
-        "call_sid": call_sid,
-        "timestamp": datetime.utcnow().isoformat(),
-        "conversation": conversation
-    }
-
-    calls.append(record)
-
-    save_calls(calls)
-
-    clear_memory(call_sid)
 
     return {
-        "status": "saved",
-        "call_sid": call_sid
+        "session_id": session_id,
+        "sdp": pc.localDescription.sdp,
+        "type": pc.localDescription.type,
+    }
+
+@app.post(
+    "/webrtc/{session_id}/close"
+)
+async def close_call(
+    session_id: str
+):
+
+    await cleanup_session(
+        session_id
+    )
+
+    return {
+        "success": True
     }
 
 
-@app.get("/calls")
-def get_calls():
+async def cleanup_session(
+    session_id: str
+):
 
-    return load_calls()
+    print(f"Cleaning up session: {session_id}")
 
+    voice_session = voice_sessions.pop(
+        session_id,
+        None
+    )
 
+    if voice_session:
 
+        try:
 
+            await voice_session.close()
 
+        except Exception as e:
 
+            print(
+                "Voice session close error:",
+                repr(e)
+            )
 
+    pc = peer_connections.pop(
+        session_id,
+        None
+    )
 
+    if pc:
 
+        try:
 
+            await pc.close()
+
+        except Exception as e:
+
+            print(
+                "Peer close error:",
+                repr(e)
+            )
