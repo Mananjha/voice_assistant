@@ -1,306 +1,104 @@
-# Naikroop AI Voice Agent
+# Naikroop AI Voice Assistant
 
-An AI-powered voice enquiry agent for Naikroop.
-
-The agent allows users to call a phone number and ask questions about Naikroop. It uses the Naikroop website as its knowledge source and uses Retrieval-Augmented Generation (RAG) to provide relevant answers.
-
-The agent also maintains short-term conversation memory during the current phone call so users can ask follow-up questions naturally.
+A browser-based voice assistant for **Naikroop**. You open a local web page, click Call, talk into your microphone, and the AI answers back in speech — using knowledge scraped from the Naikroop website.
 
 ---
 
-## Features
+## 1. Setup & How to Run It
 
-- Voice-based interaction through Twilio
-- Speech-to-text using Twilio's speech recognition
-- Natural language responses using an LLM
-- Retrieval-Augmented Generation (RAG)
-- Naikroop website as the knowledge source
-- FAISS vector database for similarity search
-- Hugging Face embeddings
-- Hugging Face LLM
-- LangChain for LLM and RAG integration
-- LangGraph for agent workflow
-- FastAPI backend
-- Short-term memory for the current call
-- Follow-up questions supported within the same call
-- No permanent conversation memory
+### Requirements
+- Python 3.10+ (3.11 recommended)
+- Windows (pyttsx3 uses the built-in SAPI5 voice engine on Windows; other OSes need a different TTS backend)
+- A Hugging Face account + API token (for the LLM)
 
----
-
-## Architecture
-
-Voice → Agent → RAG/Memory → Voice response
-
-Python
-FastAPI — backend/API
-Uvicorn — FastAPI server
-Twilio — voice calls & speech input/output
-LangChain — LLM & RAG integration
-LangGraph — agent workflow
-Hugging Face — LLM & embeddings
-GPT-OSS-120B — language model
-Sentence Transformers / all-MiniLM-L6-v2 — embeddings
-FAISS — vector database
-BeautifulSoup4 — website content extraction
-Requests — website fetching
-LangChain Text Splitters — document chunking
-Short-Term Memory — current CallSid conversation context
-TryCloudflare (Cloudflare Tunnel) — local development tunnel to Twilio
-Naikroop Website — knowledge source (naikroop.com)
-
-Setup and Run
-1. Clone the Repository
-
-Clone the project from GitHub:
-
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+### Step 1 — Create and activate a virtual environment
+```bash
 cd naikroop-ai-voice-agent
-2. Create a Virtual Environment
-
-Create a Python virtual environment:
-
 python -m venv venv
+venv\Scripts\activate       
+```
 
-Activate the virtual environment:
-
-venv\Scripts\activate
-
-After activation, the terminal should show:
-
-(venv)
-3. Install Dependencies
-
-Install all required Python packages:
-
+### Step 2 — Install dependencies
+```bash
 pip install -r requirements.txt
+pip install pywin32           
+```
 
-The project uses:
-
-FastAPI
-Uvicorn
-LangChain
-LangGraph
-Hugging Face
-Sentence Transformers
-FAISS
-BeautifulSoup4
-Requests
-Twilio
-4. Configure Environment Variables
-
-Create a .env file in the project root:
-
-naikroop-ai-voice-agent/
-│
-├── app/
-├── data/
-├── .env
-├── .env.example
-├── .gitignore
-├── requirements.txt
-└── README.md
-
-Add the required credentials to .env:
-
+### Step 3 — Configure environment variables
+Copy `.env.example` to `.env` and fill in your values:
+```
 HF_TOKEN=your_huggingface_token
 
-TWILIO_ACCOUNT_SID=your_twilio_account_sid
+# only needed if you use the phone-call version
+TWILIO_ACCOUNT_SID=your_sid         
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_PHONE_NUMBER=your_twilio_number
+```
+`HF_TOKEN` is required — the app will refuse to start without it, since it's used to call the Hugging Face-hosted LLM.
 
-TWILIO_AUTH_TOKEN=your_twilio_auth_token
+### Step 4 — Build the knowledge base
+Before the assistant can answer questions, it needs to crawl naikroop.com and build its FAISS vector index:
+```bash
+python -m app.rag
+```
+This scrapes the site, chunks the text, embeds it with `all-MiniLM-L6-v2`, and saves the index to `data/faiss_index/`. Re-run this any time the website content changes.
 
-You can use .env.example as a reference.
-
-Do not upload .env to GitHub.
-
-5. Run the FastAPI Application
-
-Start the application using Uvicorn:
-
+### Step 5 — Start the server
+```bash
 uvicorn app.main:app --reload
+```
 
-The application will run locally at:
-
+### Step 6 — Open it in your browser
+Go to:
+```
 http://127.0.0.1:8000
-6. Check the API
+```
+Click **Call**, allow microphone access, and start talking. The AI will greet you first, then respond to whatever you ask.
 
-Open the following URL in your browser:
+---
 
-http://127.0.0.1:8000
+## 2. How Browser Communication Works
 
-To open the FastAPI Swagger documentation:
+The assistant talks to your browser over **WebRTC** — the same real-time audio/video technology used by Google Meet or Zoom — rather than uploading recorded clips back and forth. This is what makes it feel like a live call instead of a chatbot with a "record" button.
 
-http://127.0.0.1:8000/docs
+### The moving parts
 
-The /docs page can be used to test the available API endpoints.
+| Layer | What it does |
+|---|---|
+| **`static/index.html` + `app.js`** | The web page. Uses `getUserMedia()` to grab your microphone and `RTCPeerConnection` to open a WebRTC connection to the server. |
+| **`app/main.py`** | FastAPI server. Exposes `/webrtc/offer`, which receives the browser's connection request and negotiates a WebRTC session using `aiortc` (Python's WebRTC library). |
+| **`app/voice.py`** | The core voice pipeline — everything below happens here. |
+| **`app/graph.py` + `app/rag.py`** | The "brain": retrieves relevant Naikroop content and asks the LLM to answer using it. |
 
-7. Test the Agent Without a Phone Call
+### The call flow, step by step
 
-The agent can first be tested using the /process-speech endpoint.
+1. **Connecting** — Your browser opens a WebRTC connection to the server. Two audio tracks are set up: one carrying your mic audio *to* the server, and one carrying the AI's voice *from* the server back to your speakers.
 
-Open another PowerShell terminal while the FastAPI server is running and execute:
+2. **Greeting** — Once the connection is confirmed active, the server waits briefly until it detects the browser is actually pulling audio frames (not just connected), then speaks a greeting.
 
-Invoke-WebRequest `
-  -Uri http://127.0.0.1:8000/process-speech `
-  -Method POST `
-  -Body @{
-      SpeechResult="What does Naikroop do?"
-      CallSid="RAGTEST123"
-  }
+3. **Listening** — Your mic audio arrives at the server in small ~20ms chunks. The server measures the volume (RMS) of each chunk to detect when you start and stop talking — this is a simple **Voice Activity Detection (VAD)** system. It also keeps a short "pre-roll" buffer so the very start of your sentence isn't cut off.
 
-The FastAPI terminal should show the user's question and the generated AI response.
+4. **Transcribing** — Once you stop talking (about 0.9 seconds of silence), your captured audio is resampled and sent to **Faster-Whisper**, a local speech-to-text model, which converts it into text.
 
-Example:
+5. **Thinking** — Your question is passed to a **LangGraph** pipeline (`graph.py`), which:
+   - Searches the FAISS vector index for relevant chunks from the Naikroop website (RAG — retrieval-augmented generation)
+   - Pulls short-term conversation memory for context
+   - Sends everything to a Hugging Face-hosted LLM, which generates the answer
 
-============================================================
-CALL SID: RAGTEST123
-USER: What does Naikroop do?
-============================================================
+6. **Speaking** — The answer text is converted to speech using **pyttsx3** (a local, offline text-to-speech engine). This runs on its own dedicated background thread, since Windows' speech engine doesn't play well with being called from random async threads.
 
-FINAL ANSWER:
-Naikroop offers an enterprise-grade no-code platform...
-8. Test Conversation Memory
+7. **Streaming back** — The generated speech audio is queued into the outgoing WebRTC audio track, which streams it to your browser in real time, and you hear the AI's reply through your speakers.
 
-Use the same CallSid to test follow-up questions.
+8. This repeats — after the AI finishes speaking, it starts listening again automatically, so the "call" continues like a real conversation until you hang up.
 
-First request:
+### Why WebRTC instead of simpler options
+A basic approach would be: record audio in the browser → upload the file → get a reply → play it back. WebRTC instead keeps a persistent, low-latency, streaming connection open in both directions, so audio flows continuously without repeated uploads — which is what makes the interaction feel like an actual phone call rather than a slow back-and-forth.
 
-Invoke-WebRequest `
-  -Uri http://127.0.0.1:8000/process-speech `
-  -Method POST `
-  -Body @{
-      SpeechResult="What does Naikroop do?"
-      CallSid="RAGTEST123"
-  }
+---
 
-Then send a follow-up question:
+## Notes
+- `data/faiss_index/` is your knowledge base — rebuild it (`python -m app.rag`) whenever the Naikroop site content changes.
+- `app/main1.py` is a separate, Twilio-based implementation for real phone calls — it's not used by the browser flow above.
+- Keep `.env` out of version control; it holds real API credentials.
 
-Invoke-WebRequest `
-  -Uri http://127.0.0.1:8000/process-speech `
-  -Method POST `
-  -Body @{
-      SpeechResult="Can you explain that more simply?"
-      CallSid="RAGTEST123"
-  }
-
-Using the same CallSid allows the agent to use the previous conversation context.
-
-9. Expose the Local Server Using TryCloudflare
-
-Twilio needs a publicly accessible URL to communicate with the local FastAPI application.
-
-Start the FastAPI server first:
-
-uvicorn app.main:app --reload
-
-Then open another terminal and start the Cloudflare tunnel:
-
-cloudflared tunnel --url http://localhost:8000
-
-Cloudflare will provide a public URL similar to:
-
-https://example.trycloudflare.com
-
-Copy the generated URL.
-
-10. Configure Twilio
-
-In the Twilio Console, configure the incoming voice webhook for your Twilio phone number.
-
-Set the webhook URL to:
-
-https://example.trycloudflare.com/voice
-
-Set the HTTP method to:
-
-POST
-
-The URL should point to the /voice endpoint of the FastAPI application.
-
-11. Make a Phone Call
-
-Call your Twilio phone number.
-
-The flow is:
-
-User
-  ↓
-Phone Call
-  ↓
-Twilio
-  ↓
-/voice
-  ↓
-Speech Recognition
-  ↓
-/process-speech
-  ↓
-LangGraph Agent
-  ↓
-RAG + Short-Term Memory
-  ↓
-Hugging Face LLM
-  ↓
-AI Response
-  ↓
-Twilio Text-to-Speech
-  ↓
-User
-
-You can then ask questions such as:
-
-What does Naikroop do?
-
-What is NaikFlow?
-
-What services does Naikroop provide?
-
-Can you explain that more simply?
-12. RAG Knowledge Base
-
-The Naikroop website is used as the knowledge source.
-
-https://naikroop.com
-
-The RAG pipeline performs:
-
-Naikroop Website
-       ↓
-Website Crawling
-       ↓
-Text Extraction
-       ↓
-Text Chunking
-       ↓
-Embeddings
-       ↓
-FAISS Vector Store
-       ↓
-Relevant Knowledge
-       ↓
-Hugging Face LLM
-       ↓
-Final Answer
-
-The generated FAISS vector store is stored locally in:
-
-data/faiss_index/
-
-This generated directory is excluded from Git using .gitignore.
-
-13. Project Startup Summary
-
-For normal development, use two terminals.
-
-Terminal 1 — FastAPI
-cd naikroop-ai-voice-agent
-venv\Scripts\activate
-uvicorn app.main:app --reload
-Terminal 2 — TryCloudflare
-cloudflared tunnel --url http://localhost:8000
-
-Then configure the generated Cloudflare URL in Twilio:
-
-https://YOUR-CLOUDFLARE-URL/voice
-
-After that, call the Twilio number and interact with the AI voice agent.
 
